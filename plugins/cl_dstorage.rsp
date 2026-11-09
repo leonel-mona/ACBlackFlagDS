@@ -1,0 +1,15 @@
+/c
+/O2
+/GL
+/MD
+/arch:AVX2
+/D_WIN32_WINNT=0x0A00
+/DNDEBUG
+/I"/c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207/include"
+/I"/c/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/ucrt"
+/I"/c/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/shared"
+/I"/c/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/um"
+/I"/c/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/winrt"
+/I"/c/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/cppwinrt"
+/Fo:dstorage_proxy.obj
+dstorage_proxy.cpp

@@ -1,0 +1,3 @@
+/O2 /GL /MT /arch:AVX2 /D_WIN32_WINNT=0x0A00 /Fe:"../acbf_hdd_preloader.exe"
+acbf_hdd_preloader.cpp
+kernel32.lib

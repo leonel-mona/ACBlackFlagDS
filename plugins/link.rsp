@@ -1,0 +1,4 @@
+/DLL
+/OUT:"E:\Games\AC Black Flag Resynced\plugins\dstorage.dll"
+"E:\Games\AC Black Flag Resynced\plugins\dstorage_proxy.obj"
+kernel32.lib

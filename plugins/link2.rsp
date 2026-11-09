@@ -1,0 +1,4 @@
+/DLL
+/OUT:dstorage.dll
+dstorage_proxy.obj
+kernel32.lib
