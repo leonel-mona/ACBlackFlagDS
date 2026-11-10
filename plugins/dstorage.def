@@ -1,4 +1,5 @@
 LIBRARY dstorage
 EXPORTS
-    DStorageSetConfiguration=@dstorage_original.DStorageSetConfigurationCore NONAME
-    DStorageCreateCompressionCodec=@dstorage_original.DStorageCreateCompressionCodecCore NONAME
+    DStorageGetFactory
+    DStorageSetConfiguration
+    DStorageCreateCompressionCodec

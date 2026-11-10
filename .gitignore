@@ -1,0 +1,37 @@
+# ===== Build artifacts =====
+*.dll
+*.obj
+*.exp
+*.lib
+*.bak
+build/
+
+# ===== Logs y reportes =====
+*.log
+*.pml
+*.csv
+reports/
+DirectStorageProxy.log
+
+# ===== Juego y datos (NUNCA subir) =====
+*.exe
+*.asi
+*.forge
+*.dll
+
+# ===== IDE / VS =====
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+.vscode/
+.idea/
+
+# ===== Sistema =====
+.DS_Store
+Thumbs.db
+
+# ===== Carpetas del proyecto que NO son el parche =====
+D3D12/
+videos/
+third_party/
