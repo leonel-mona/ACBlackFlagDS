@@ -105,7 +105,7 @@ static size_t g_BlockSize = 1024 * 1024;     // 1 MiB default
 static size_t g_CacheSize = 0;               // computed from CacheMB
 static size_t g_MaxBlocks = 0;               // computed from CacheMB / BlockMB
 
-// Logging helper
+// Logging helper (synchronous, kept for infrequent messages: config, L1, proxy)
 static void LogWrite(const char* msg) {
     if (!g_EnableLogging) return;
     WCHAR path[MAX_PATH];
@@ -123,6 +123,78 @@ static void LogWrite(const char* msg) {
         WriteFile(h, msg, (DWORD)strlen(msg), &written, nullptr);
         CloseHandle(h);
     }
+}
+
+// Async log writer
+static const int LOG_BUF_SIZE = 64 * 1024;        // 64 KB ring buffer
+static const int LOG_CHUNK = 512;                 // 512 bytes per entry max
+static char g_LogBuf[LOG_BUF_SIZE];
+static volatile DWORD g_LogWritePos = 0;
+static volatile DWORD g_LogReadPos = 0;
+static HANDLE g_LogFlushEvent = nullptr;
+static CRITICAL_SECTION g_LogLock;
+
+static void LogWriteAsync(const char* msg) {
+    if (!g_EnableLogging || !msg || !*msg) return;
+
+    EnterCriticalSection(&g_LogLock);
+    DWORD len = (DWORD)strlen(msg);
+    if (len > LOG_CHUNK) len = LOG_CHUNK;
+    if (len >= LOG_BUF_SIZE) { /* buffer full, flush first */ }
+
+    DWORD remaining = LOG_BUF_SIZE - g_LogWritePos;
+    DWORD space = std::min(len, remaining);
+    memcpy(g_LogBuf + g_LogWritePos, msg, space);
+    g_LogWritePos += space;
+    if (space < len && g_LogWritePos > 0) {
+        memcpy(g_LogBuf, msg + space, len - space);
+        g_LogWritePos = len - space;
+    }
+
+    LeaveCriticalSection(&g_LogLock);
+    SetEvent(g_LogFlushEvent);
+}
+
+// Writer thread
+static DWORD WINAPI LogWriterThread(LPVOID) {
+    while (WaitForSingleObject(g_LogFlushEvent, INFINITE) == WAIT_OBJECT_0) {
+        FlushConsoleInputBuffer(nullptr); // reset event
+
+        EnterCriticalSection(&g_LogLock);
+        if (g_LogWritePos <= g_LogReadPos) {
+            // All consumed, reset to start
+            memset(g_LogBuf, 0, LOG_BUF_SIZE);
+            g_LogWritePos = 0;
+            g_LogReadPos = 0;
+            LeaveCriticalSection(&g_LogLock);
+            continue;
+        }
+
+        char* data = g_LogBuf;
+        DWORD size = g_LogWritePos - g_LogReadPos;
+        g_LogReadPos = g_LogWritePos;
+        LeaveCriticalSection(&g_LogLock);
+
+        // Write in chunks to file
+        WCHAR path[MAX_PATH];
+        GetModuleFileNameW(nullptr, path, MAX_PATH);
+        WCHAR* slash = wcsrchr(path, L'\\');
+        if (slash) wcscpy(slash + 1, L"DirectStorageProxy.log");
+        else wcscpy(path, L"DirectStorageProxy.log");
+
+        HANDLE h = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h != INVALID_HANDLE_VALUE) {
+            DWORD written = 0;
+            DWORD total = 0;
+            while (total < size) {
+                DWORD chunk = std::min<size_t>(4096, size - total);
+                WriteFile(h, data + total, chunk, &written, nullptr);
+                total += written;
+            }
+            CloseHandle(h);
+        }
+    }
+    return 0;
 }
 
 // Check if path ends with .forge (case-insensitive)
@@ -431,7 +503,7 @@ static bool CacheReadBlockLocked(CacheBlock* block, HANDLE file_handle, uint64_t
     char logbuf[256];
     snprintf(logbuf, sizeof(logbuf), "[PF] Prefetch read: file_id=%llu block=%llu offset=%llu size=%zu\n",
              block->file_id, block->block_index, file_offset, block->size);
-    LogWrite(logbuf);
+    LogWriteAsync(logbuf);
 
     status = g_RealNtReadFile(file_handle, nullptr, nullptr, nullptr, &iosb, block->data, (ULONG)block->size, &new_pos, nullptr);
 
@@ -788,7 +860,7 @@ NTSTATUS NTAPI HookedNtReadFile(
                 char logbuf[256];
                 snprintf(logbuf, sizeof(logbuf), "[L2] Cache HIT: file_id=%llu offset=%lld len=%lu\n",
                          file_id, read_offset, Length);
-                LogWrite(logbuf);
+                LogWriteAsync(logbuf);
                 return 0;  // STATUS_SUCCESS
             }
             // Partial hit - fall through to disk read
@@ -798,7 +870,7 @@ NTSTATUS NTAPI HookedNtReadFile(
         char logbuf[256];
         snprintf(logbuf, sizeof(logbuf), "[L2] Cache MISS: file_id=%llu offset=%lld len=%lu blocks=%llu-%llu\n",
                  file_id, read_offset, Length, start_block, end_block - 1);
-        LogWrite(logbuf);
+        LogWriteAsync(logbuf);
     }
 
     // Perform actual read
@@ -839,7 +911,7 @@ NTSTATUS NTAPI HookedNtReadFile(
                  Length,
                  (unsigned int)status,
                  bytesRead);
-        LogWrite(logbuf);
+        LogWriteAsync(logbuf);
     }
 
     return status;
@@ -872,6 +944,12 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
                  "[Config] EnableLevel1=%d EnableLevel2=%d EnableLogging=%d CacheMB=%d BlockMB=%d PrefetchBlocks=%d\n",
                  g_EnableLevel1, g_EnableLevel2, g_EnableLogging, g_CacheMB, g_BlockMB, g_PrefetchBlocks);
         LogWrite(cfgBuf);
+
+        // Initialize async logging
+        InitializeCriticalSection(&g_LogLock);
+        g_LogFlushEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        HANDLE logThread = CreateThread(nullptr, 0, LogWriterThread, nullptr, 0, nullptr);
+        if (logThread) SetThreadPriority(logThread, THREAD_PRIORITY_LOWEST);
 
         // Initialize cache if Level 2 enabled
         if (g_EnableLevel2) {
@@ -951,6 +1029,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
             g_PrefetchHead = g_PrefetchTail = nullptr;
             ReleaseSRWLockExclusive(&g_PrefetchLock);
         }
+
+        // Cleanup async logging
+        SetEvent(g_LogFlushEvent);
+        DeleteCriticalSection(&g_LogLock);
 
         // Cleanup cache
         CacheCleanup();
